@@ -38,3 +38,48 @@ var_95 = compute_var(
     alpha=0.95
 )
 print(f"95% Risk P&L based: ${var_95:,.2f}")
+
+
+
+#moving from arithmetic returns to log return as a next step: namely, geometric brownian motion with Euler–Maruyama discretization
+
+def simulate_gbm(
+        mu: float,
+        sigma: float,
+        T: float,
+        num_steps: int,
+        num_simulations: int,
+        initial_value: float
+):
+    """
+    Simulating terminal portfolio values using Geometric Brownian Motion.
+    """
+    dt = T / num_steps
+
+    Z = np.random.normal(size=(num_simulations, num_steps))
+
+    drift = (mu - 0.5 * sigma ** 2) * dt
+    diffusion = sigma * np.sqrt(dt) * Z
+
+    log_returns = drift + diffusion
+
+    terminal_values = initial_value * np.exp(np.sum(log_returns, axis=1))
+
+    return terminal_values
+
+
+terminal_values_gbm = simulate_gbm(
+    mu=0.1,
+    sigma=0.2,
+    T=1.0,
+    num_steps=365,
+    num_simulations=10_000,
+    initial_value=100_000
+)
+
+var_95_gbm = compute_var(
+    terminal_values_gbm,
+    initial_value=100_000
+)
+
+print(f"95% VaR (GBM model): ${var_95_gbm:,.2f}")
