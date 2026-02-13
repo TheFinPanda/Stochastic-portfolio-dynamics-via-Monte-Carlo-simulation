@@ -17,8 +17,8 @@ def simulate_portfolio_returns(
 
 
 terminal_values = simulate_portfolio_returns(
-    mu=0.0005,
-    sigma=0.02,
+    mu=0.00027,
+    sigma=0.0105,
     num_days=365,
     num_simulations=10_000,
     initial_value=100_000
@@ -83,3 +83,23 @@ var_95_gbm = compute_var(
 )
 
 print(f"95% VaR (GBM model): ${var_95_gbm:,.2f}")
+
+### going beyond VaR, to CVaR
+
+def compute_cvar(terminal_values, initial_value, alpha=0.95):
+    pnl = terminal_values - initial_value
+    var_threshold = np.percentile(pnl, 100 * (1 - alpha))
+
+    tail_losses = pnl[pnl <= var_threshold]
+
+    cvar = -np.mean(tail_losses)
+
+    return cvar
+
+cvar_95 = compute_cvar(
+    terminal_values,
+    initial_value=100_000,
+    alpha=0.95
+)
+
+print(f"95% CVaR expected shortfall: ${cvar_95:,.2f}")
