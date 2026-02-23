@@ -1,4 +1,7 @@
+import yfinance as yf
+import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
 def simulate_portfolio_returns(
     mu: float,
@@ -38,7 +41,6 @@ var_95 = compute_var(
     alpha=0.95
 )
 print(f"95% Risk P&L based: ${var_95:,.2f}")
-
 
 
 #moving from arithmetic returns to log return as a next step: namely, geometric brownian motion with Euler–Maruyama discretization
@@ -84,16 +86,14 @@ var_95_gbm = compute_var(
 
 print(f"95% VaR (GBM model): ${var_95_gbm:,.2f}")
 
+
 ### going beyond VaR, to CVaR
 
 def compute_cvar(terminal_values, initial_value, alpha=0.95):
     pnl = terminal_values - initial_value
     var_threshold = np.percentile(pnl, 100 * (1 - alpha))
-
     tail_losses = pnl[pnl <= var_threshold]
-
     cvar = -np.mean(tail_losses)
-
     return cvar
 
 cvar_95 = compute_cvar(
@@ -110,27 +110,24 @@ print(f"95% CVaR expected shortfall: ${cvar_95:,.2f}")
 # ===============================
 
 def simulate_multi_asset_gbm(
-    mu: np.ndarray,                 # expected returns (vector)
-    sigma: np.ndarray,              # volatilities (vector)
-    corr_matrix: np.ndarray,        # correlation matrix
-    weights: np.ndarray,            # portfolio weights
+    mu: np.ndarray,
+    sigma: np.ndarray,
+    corr_matrix: np.ndarray,
+    weights: np.ndarray,
     T: float,
     num_steps: int,
     num_simulations: int,
     initial_value: float
 ):
-    """
-    Basically simulateing correlated multi-asset GBM
-    returns: terminal portfolio values.
-    """
 
     num_assets = len(mu)
     dt = T / num_steps
 
     cov_matrix = np.outer(sigma, sigma) * corr_matrix
+    cov_matrix += 1e-10 * np.eye(num_assets)
     L = np.linalg.cholesky(cov_matrix)
 
-    Z = np.random.normal(size=(num_simulations, num_steps, num_assets)) #indep shock
+    Z = np.random.normal(size=(num_simulations, num_steps, num_assets))
     correlated_shocks = np.einsum("ijk,kl->ijl", Z, L)
 
     drift = (mu - 0.5 * sigma**2) * dt
@@ -144,7 +141,7 @@ def simulate_multi_asset_gbm(
 
     return portfolio_terminal
 
-#portfolio structure I give now
+
 mu = np.array([0.08, 0.12, 0.05])
 sigma = np.array([0.15, 0.25, 0.10])
 
@@ -153,6 +150,14 @@ corr_matrix = np.array([
     [0.6, 1.0, 0.4],
     [0.2, 0.4, 1.0]
 ])
+
+corr_high = np.array([
+    [1.0, 0.9, 0.9],
+    [0.9, 1.0, 0.9],
+    [0.9, 0.9, 1.0]
+])
+
+corr_zero = np.eye(3)
 
 weights = np.array([0.4, 0.4, 0.2])
 
@@ -179,3 +184,123 @@ cvar_95_multi = compute_cvar(
 
 print(f"95% VaR (Multi-Asset Portfolio): ${var_95_multi:,.2f}")
 print(f"95% CVaR (Multi-Asset Portfolio): ${cvar_95_multi:,.2f}")
+
+
+terminal_high_corr = simulate_multi_asset_gbm(
+    mu, sigma, corr_high, weights,
+    T=1.0,
+    num_steps=365,
+    num_simulations=10_000,
+    initial_value=100_000
+)
+
+print("High Correlation VaR:",
+      compute_var(terminal_high_corr, 100_000))
+
+
+terminal_zero_corr = simulate_multi_asset_gbm(
+    mu, sigma, corr_zero, weights,
+    T=1.0,
+    num_steps=365,
+    num_simulations=10_000,
+    initial_value=100_000
+)
+
+print("Zero Correlation VaR:",
+      compute_var(terminal_zero_corr, 100_000))
+
+
+rho_values = []
+var_values = []
+
+for rho in np.linspace(0, 0.99, 25):
+    corr_test = np.array([
+        [1.0, rho, rho],
+        [rho, 1.0, rho],
+        [rho, rho, 1.0]
+    ])
+
+    terminal = simulate_multi_asset_gbm(
+        mu, sigma, corr_test, weights,
+        T=1.0,
+        num_steps=365,
+        num_simulations=10_000,
+        initial_value=100_000
+    )
+
+    var = compute_var(terminal, 100_000)
+
+    rho_values.append(rho)
+    var_values.append(var)
+
+    print(f"rho={rho:.2f} → VaR={var:,.0f}")
+
+plt.figure(figsize=(10, 6))
+plt.plot(rho_values, var_values)
+plt.xlabel("Correlation (rho)")
+plt.ylabel("95% VaR")
+plt.title("Impact of Correlation on Portfolio VaR")
+plt.grid(True)
+plt.show()
+
+
+# Now let's deal with real life data: working with SPY
+
+tickers = ["SPY"]
+
+data = yf.download(tickers, start="2015-01-01", auto_adjust=True)
+prices = data["Close"] #important to close
+
+returns = np.log(prices / prices.shift(1)).dropna()
+
+mu = returns.mean() * 252
+cov_matrix = returns.cov() * 252
+sigma = np.sqrt(np.diag(cov_matrix))
+corr_matrix = returns.corr()
+
+weights = np.array([1.0])
+
+terminal_real = simulate_multi_asset_gbm(
+    mu.values,
+    sigma,
+    corr_matrix.values,
+    weights,
+    T=1.0,
+    num_steps=252,
+    num_simulations=10_000,
+    initial_value=100_000
+)
+
+var_real = compute_var(terminal_real, 100_000)
+cvar_real = compute_cvar(terminal_real, 100_000)
+
+print(f"Real Data VaR: ${var_real:,.2f}")
+print(f"Real Data CVaR: ${cvar_real:,.2f}")
+
+
+#some trends to understand this ETF
+plt.figure(figsize=(10,6))
+plt.plot(prices["SPY"])
+plt.title("SPY Adjusted Price History")
+plt.xlabel("Date")
+plt.ylabel("Price")
+plt.grid(True)
+plt.show()
+
+
+rolling_vol = returns["SPY"].rolling(252).std() * np.sqrt(252)
+
+plt.figure(figsize=(10,6))
+plt.plot(rolling_vol)
+plt.title("SPY Rolling 1-Year Annualized Volatility")
+plt.xlabel("Date")
+plt.ylabel("Volatility")
+plt.grid(True)
+plt.show()
+
+
+#comparing with my MC
+historical_pnl = returns["SPY"] * 100_000
+historical_var = -np.percentile(historical_pnl, 5)
+
+print(f"Historical 95% Daily VaR (SPY): ${historical_var:,.2f}")
