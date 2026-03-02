@@ -1,5 +1,6 @@
 import yfinance as yf
 import pandas as pd
+from scipy import stats
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -304,3 +305,107 @@ historical_pnl = returns["SPY"] * 100_000
 historical_var = -np.percentile(historical_pnl, 5)
 
 print(f"Historical 95% Daily VaR (SPY): ${historical_var:,.2f}")
+
+########################## Test SPY if its gaussian or tt ################################
+
+returns = np.log(prices / prices.shift(1)).dropna()
+spy_returns = returns["SPY"]
+
+#NORMALITY TESTS
+skewness = stats.skew(spy_returns)
+kurtosis = stats.kurtosis(spy_returns, fisher=True)
+
+jb_stat, jb_pvalue = stats.jarque_bera(spy_returns)
+
+print("Skewness:", skewness)
+print("Excess Kurtosis:", kurtosis)
+print("Jarque-Bera statistic:", jb_stat)
+print("Jarque-Bera p-value:", jb_pvalue)
+
+if jb_pvalue < 0.05:
+    print("Reject normality at 5% significance level.")
+else:
+    print("Cannot reject normality.")
+
+#now plot thet tail
+plt.figure(figsize=(10,6))
+
+# Histogram
+plt.hist(spy_returns, bins=100, density=True, alpha=0.6)
+
+# Normal fit
+mu_hat = spy_returns.mean()
+sigma_hat = spy_returns.std()
+x = np.linspace(spy_returns.min(), spy_returns.max(), 1000)
+plt.plot(x, stats.norm.pdf(x, mu_hat, sigma_hat))
+
+plt.title("SPY Returns vs Fitted Normal Distribution")
+plt.xlabel("Log Returns")
+plt.ylabel("Density")
+plt.show()
+
+
+#### QQ plot
+plt.figure(figsize=(6,6))
+stats.probplot(spy_returns, dist="norm", plot=plt)
+plt.title("QQ-Plot: SPY Returns vs Normal")
+plt.show()
+
+### moving on to replace the gaussian which is wrong to capture any shock or crash by t distribution
+
+params = stats.t.fit(spy_returns)
+df_est, loc_est, scale_est = params
+
+print("Estimated degrees of freedom:", df_est)
+
+#okay important to note that SPY having so fat tails gives rise to df < 2 so physically
+#so fitting with unconstrained Student t will not work
+
+df=df_est
+df = 5
+########################## Gaussian vs Student-t VaR & CVaR ##########################
+
+confidence = 0.95
+alpha = 1 - confidence
+portfolio_value = 100_000
+
+mu_daily = spy_returns.mean()
+sigma_daily = spy_returns.std()
+
+# =========================
+# Gaussian VaR
+# =========================
+z_gauss = stats.norm.ppf(alpha)
+gaussian_var = -(mu_daily + z_gauss * sigma_daily) * portfolio_value
+
+# =========================
+# Student-t VaR
+# =========================
+z_t = stats.t.ppf(alpha, df=df)
+student_var = -(mu_daily + z_t * sigma_daily) * portfolio_value
+
+# =========================
+# Gaussian CVaR
+# =========================
+gaussian_cvar = -(mu_daily - sigma_daily *
+                  stats.norm.pdf(z_gauss) / alpha) * portfolio_value
+
+# =========================
+# Student-t CVaR
+# =========================
+student_cvar = -(
+    mu_daily
+    - sigma_daily *
+    ((df + z_t**2) / (df - 1)) *
+    stats.t.pdf(z_t, df=df) / alpha
+) * portfolio_value
+
+print("Gaussian VaR:", round(gaussian_var, 2))
+print("Student-t VaR:", round(student_var, 2))
+print("Gaussian CVaR:", round(gaussian_cvar, 2))
+print("Student-t CVaR:", round(student_cvar, 2))
+
+
+
+
+
